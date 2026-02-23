@@ -1,67 +1,55 @@
-import requests
 import re
 import json
+import os
 from datetime import datetime
 
 def solve():
-    # 目标 API 地址
-    url = "https://n7bnnz.ksxmy.com/api/forums/prediction/prediction/page?pageNum=1&pageSize=15&predictionTypeId=61&lotteryType=2"
-    
-    # 模拟真实手机浏览器的请求头
-    headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1",
-        "Referer": "https://n7bnnz.ksxmy.com/",
-        "Accept": "application/json, text/plain, */*"
-    }
-
     now_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    # 定义数据文件和结果文件
+    raw_file = "raw_data.json"
+    output_file = "999.txt"
     
     try:
-        # 发送网络请求
-        response = requests.get(url, headers=headers, timeout=15)
+        # 1. 检查数据文件是否存在
+        if not os.path.exists(raw_file):
+            raise Exception(f"找不到 {raw_file}。请先将 Response 内容粘贴到该文件中。")
+            
+        with open(raw_file, "r", encoding="utf-8") as f:
+            raw_content = f.read()
         
-        # 验证是否返回了有效内容
-        if response.status_code != 200:
-            raise Exception(f"服务器返回状态码 {response.status_code}")
-        
-        data = response.json()
+        # 2. 解析 JSON 数据
+        data = json.loads(raw_content)
         items = data.get('data', {}).get('list', [])
         
         if not items:
-            raise Exception("API 未返回有效列表数据")
+            raise Exception("数据格式不正确，未找到有效的专家列表。")
 
-        # 1. 自动提取最新期数
+        # 3. 提取期数和前三个高手号码
         issue = items[0].get('issue', '未知期数')
-        
-        # 2. 提取前三个高手的 30 个号码
         num_sets = []
         for i in range(min(3, len(items))):
             content = items[i].get('content', '')
-            # 使用正则抓取所有数字并统一补齐两位（如 1 变 01）
+            # 提取数字并统一成两位格式（如 1 变 01）
             nums = set(n.zfill(2) for n in re.findall(r'\d+', content))
             num_sets.append(nums)
-            
-        if len(num_sets) < 3:
-            raise Exception(f"高手人数不足3人（当前只有 {len(num_sets)} 人）")
 
-        # 3. 三方对碰（计算交集）
-        common_nums = sorted(list(set.intersection(*num_sets)))
-        result_text = " . ".join(common_nums)
+        # 4. 计算三方共同号码（交集）
+        common = sorted(list(set.intersection(*num_sets)))
+        result_text = " . ".join(common)
 
-        # 4. 写入结果文件
-        with open("999.txt", "w", encoding="utf-8") as f:
+        # 5. 写入 999.txt
+        with open(output_file, "w", encoding="utf-8") as f:
             f.write(f"最新期数: {issue}\n")
-            f.write(f"三方共同号码 ({len(common_nums)}个):\n{result_text}\n")
-            f.write(f"\n最后自动更新: {now_time}")
-            
-        print(f"✅ 成功！抓取第 {issue} 期，找到 {len(common_nums)} 个重复号。")
+            f.write(f"三方共同号码 ({len(common)}个):\n{result_text}\n")
+            f.write(f"\n最后解析成功时间: {now_time}")
+        
+        print(f"✅ 处理完成！期数: {issue}，共同号码: {len(common)}个")
 
     except Exception as e:
-        # 如果报错，记录错误信息到文件，方便排查
-        error_info = f"抓取失败: {str(e)}"
-        with open("999.txt", "w", encoding="utf-8") as f:
-            f.write(f"{error_info}\n更新时间: {now_time}")
-        print(f"❌ {error_info}")
+        error_msg = f"解析失败原因: {str(e)}"
+        with open(output_file, "w", encoding="utf-8") as f:
+            f.write(f"{error_msg}\n检查时间: {now_time}")
+        print(f"❌ {error_msg}")
 
 if __name__ == "__main__":
     solve()
