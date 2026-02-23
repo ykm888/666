@@ -1,10 +1,10 @@
-name: Manual Lottery Scraper
+name: Manual Scrape to TXT
 
 on:
-  workflow_dispatch: # 核心：仅允许手动触发
+  workflow_dispatch: # 仅手动触发
 
 permissions:
-  contents: write # 允许脚本修改并提交 index.html
+  contents: write # 必须赋予写入权限以更新 999.txt
 
 jobs:
   build:
@@ -24,9 +24,10 @@ jobs:
       - name: Run Scraper
         run: python scraper.py
 
-      - name: Commit and Push
+      - name: Commit 999.txt
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "Manual-Bot"
-          git add index.html
-          git diff --quiet && git diff --staged --quiet || (git commit -m "Manual update: $(date)" && git push)
+          git add 999.txt
+          # 只有在文件内容确实有变化时才提交，避免报错
+          git diff --quiet && git diff --staged --quiet || (git commit -m "更新号码库: $(date)" && git push)
