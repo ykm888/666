@@ -1,0 +1,32 @@
+name: Manual Lottery Scraper
+
+on:
+  workflow_dispatch: # 核心：仅允许手动触发
+
+permissions:
+  contents: write # 允许脚本修改并提交 index.html
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install requests
+
+      - name: Run Scraper
+        run: python scraper.py
+
+      - name: Commit and Push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "Manual-Bot"
+          git add index.html
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Manual update: $(date)" && git push)
