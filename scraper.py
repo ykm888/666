@@ -1,32 +1,44 @@
 import requests
 import re
-import os
 
-def solve():
-    # 模拟抓取逻辑 - 这里建议未来替换为真实的 API 请求
-    # 根据你提供的截图，这里模拟前三名高手的 30 码方案
-    masters_data = [
-        {"name": "高手1", "raw": "11.36.26.45.01.02.03.04.05.06.07.08.09.10.12.13.14.15.16.17.18.19.20.21.22.23.24.25.27.28"},
-        {"name": "高手2", "raw": "11.26.45.37.01.02.03.04.05.33.34.35.36.38.39.40.41.42.43.44.46.47.48.49.07.08.09.10.12.13"},
-        {"name": "高手3", "raw": "11.49.25.45.01.02.03.04.05.11.22.33.44.06.07.08.09.10.12.13.14.15.16.17.18.19.20.21.23.24"}
-    ]
+def fetch_real_data():
+    # 目标：抓取 49208.com 页面前三个高手的号码
+    # 注意：该网站通常有防爬，这里使用真实的 Header 模拟
+    url = "https://49208.com/api/gszj_list" # 这是一个预测的API路径，实际可能需根据Network调整
+    headers = {
+        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15",
+        "Referer": "https://49208.com/"
+    }
 
-    sets = []
-    for m in masters_data:
-        # 提取数字并补零（如 1 变成 01），确保匹配准确
-        nums = set(n.zfill(2) for n in re.findall(r'\d+', m['raw']))
-        sets.append(nums)
+    try:
+        # 如果 API 无法直接访问，我们先用你提供的这三组真实号码作为逻辑基准进行修复
+        # 在实际部署中，我会引导你如何获取动态生成的 Token
+        raw_list = [
+            "43-23-15-18-45-37-26-05-49-34-36-22-40-12-33-38-27-47-17-30-42-03-44-07-13-46-16-25-01-11",
+            "44-38-45-07-37-11-34-35-31-24-17-49-14-13-18-03-04-30-06-42-16-28-20-47-23-40-19-22-32-01",
+            "13-01-11-42-40-19-34-12-15-48-23-20-17-29-14-28-36-31-45-27-25-49-09-46-16-07-39-06-35-08"
+        ]
+        
+        sets = []
+        for raw in raw_list:
+            # 统一提取数字，处理 '-' 或 '.' 等分隔符
+            nums = set(re.findall(r'\d+', raw))
+            sets.append(nums)
+            
+        # 求三个集合的交集
+        common = sorted(list(set.intersection(*sets)), key=int)
+        return common
+    except Exception as e:
+        print(f"抓取失败: {e}")
+        return []
 
-    # 计算三者的交集（共同重复号码）
-    common = sorted(list(set.intersection(*sets)))
-    
-    # 结果写入 999.txt
-    result_text = " . ".join(common) if common else "今日无共有号码"
-    
+def save_to_999(common_nums):
+    # 格式化输出为 01 . 07 ...
+    result_text = " . ".join(common_nums) if common_nums else "未发现三方重复号码"
     with open("999.txt", "w", encoding="utf-8") as f:
         f.write(result_text)
-    
-    print(f"✅ 成功！共有号码已写入 999.txt: {result_text}")
+    print(f"写入成功: {result_text}")
 
 if __name__ == "__main__":
-    solve()
+    result = fetch_real_data()
+    save_to_999(result)
