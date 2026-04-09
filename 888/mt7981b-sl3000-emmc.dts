@@ -19,17 +19,16 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
-		/* 救砖专用：由 U-Boot 通过 FIT 镜像传递内核命令行，这里只保留串口参数 */
 		bootargs = "console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000";
 	};
 
-	/* 1GB DDR4 完整映射 */
+	/* 1GB DDR4 */
 	memory@40000000 {
 		device_type = "memory";
 		reg = <0x0 0x40000000 0x0 0x40000000>;
 	};
 
-	/* 1.8V 稳压器，用于 eMMC vqmmc */
+	/* 稳压器 */
 	reg_1p8v: regulator-1p8v {
 		compatible = "regulator-fixed";
 		regulator-name = "fixed-1.8V";
@@ -39,7 +38,6 @@
 		regulator-boot-on;
 	};
 
-	/* 3.3V 稳压器，用于 eMMC vmmc */
 	reg_3p3v: regulator-3p3v {
 		compatible = "regulator-fixed";
 		regulator-name = "fixed-3.3V";
@@ -81,7 +79,7 @@
 	};
 };
 
-/* SPI-NOR 32MB 救砖分区表（与 U-Boot 分区对齐，firmware 大小 25MB） */
+/* SPI-NOR 分区表（与 U-Boot 对齐，firmware 25MB） */
 &spi0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi0_flash_pins>;
@@ -103,7 +101,6 @@
 				read-only;
 			};
 
-			/* u-boot-env 分区 64KB，与 U-Boot 默认环境大小一致 */
 			partition@100000 {
 				label = "u-boot-env";
 				reg = <0x100000 0x10000>;
@@ -127,7 +124,7 @@
 				read-only;
 			};
 
-			/* firmware 分区 25MB，与 IMAGE_SIZE=25600k 严格匹配 */
+			/* firmware 分区 25MB，与 initramfs 镜像大小匹配 */
 			partition@580000 {
 				label = "firmware";
 				reg = <0x580000 0x1900000>;
@@ -136,7 +133,7 @@
 	};
 };
 
-/* eMMC 启用（救砖时需要挂载 eMMC 刷写固件） */
+/* eMMC 启用（救砖时需要挂载） */
 &mmc0 {
 	status = "okay";
 	pinctrl-names = "default", "state_uhs";
@@ -205,12 +202,8 @@
 };
 
 /* 禁用 USB（设备无 USB 口） */
-&usb_phy {
-	status = "disabled";
-};
-&xhci {
-	status = "disabled";
-};
+&usb_phy { status = "disabled"; };
+&xhci { status = "disabled"; };
 
 &pio {
 	spi0_flash_pins: spi0-pins {
@@ -251,6 +244,5 @@
 &uart0 { status = "okay"; };
 &watchdog { status = "okay"; };
 
-/* 显式启用稳压器 */
 &reg_3p3v { status = "okay"; };
 &reg_1p8v { status = "okay"; };
