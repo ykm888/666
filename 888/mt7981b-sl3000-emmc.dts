@@ -1,0 +1,209 @@
+/dts-v1/;
+#include "mt7981.dtsi"
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/leds/common.h>
+
+/ {
+	model = "Siluo SL3000 (1GB DDR4, 32MB SPI-NOR Rescue)";
+	compatible = "siluo,sl3000-spi-nor", "mediatek,mt7981";
+
+	aliases {
+		serial0 = &uart0;
+		led-boot = &status_green_led;
+		led-failsafe = &status_red_led;
+		led-running = &status_green_led;
+		led-upgrade = &status_blue_led;
+		label-mac-device = &gmac0;
+	};
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+		/* 救砖专用：强制走 initramfs，不挂载 rootfs */
+		bootargs = "console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 root=/dev/ram0";
+	};
+
+	/* 1GB DDR4 完整映射 */
+	memory@40000000 {
+		device_type = "memory";
+		reg = <0x0 0x40000000 0x0 0x40000000>;
+	};
+
+	reg_1p8v: regulator-1p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "fixed-1.8V";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		status_red_led: status-red {
+			label = "red:status";
+			gpios = <&pio 10 GPIO_ACTIVE_LOW>;
+		};
+
+		status_green_led: status-green {
+			label = "green:status";
+			gpios = <&pio 11 GPIO_ACTIVE_LOW>;
+			linux,default-trigger = "heartbeat";
+		};
+
+		status_blue_led: status-blue {
+			label = "blue:status";
+			gpios = <&pio 12 GPIO_ACTIVE_LOW>;
+		};
+	};
+
+	keys {
+		compatible = "gpio-keys";
+
+		reset {
+			label = "reset";
+			linux,code = <KEY_RESTART>;
+			gpios = <&pio 1 GPIO_ACTIVE_LOW>;
+			debounce-interval = <60>;
+		};
+	};
+};
+
+/* SPI-NOR 32MB 救砖分区表 */
+&spi0 {
+	pinctrl-names = "default";
+	pinctrl-0 = <&spi0_flash_pins>;
+	status = "okay";
+
+	flash@0 {
+		compatible = "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <52000000>;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			/* 0x000000 - 0x100000 (1MB) */
+			partition@0 {
+				label = "BL2";
+				reg = <0x000000 0x100000>;
+				read-only;
+			};
+
+			/* 0x100000 - 0x180000 (512KB) */
+			partition@100000 {
+				label = "u-boot-env";
+				reg = <0x100000 0x80000>;
+			};
+
+			/* 0x180000 - 0x380000 (2MB) */
+			partition@180000 {
+				label = "factory";
+				reg = <0x180000 0x200000>;
+				read-only;
+			};
+
+			/* 0x380000 - 0x580000 (2MB) */
+			partition@380000 {
+				label = "FIP";
+				reg = <0x380000 0x200000>;
+				read-only;
+			};
+
+			/* 0x580000 - 0x1F00000 (约 25.5MB) */
+			partition@580000 {
+				label = "firmware";
+				reg = <0x580000 0x1980000>;
+			};
+
+			/* 0x1F00000 - 0x2000000 (1MB) */
+			partition@1f00000 {
+				label = "storage";
+				reg = <0x1F00000 0x100000>;
+			};
+		};
+	};
+};
+
+/* 2.5G MAC + MT7531 交换机 */
+&eth {
+	status = "okay";
+
+	gmac0: mac@0 {
+		compatible = "mediatek,eth-mac";
+		reg = <0>;
+		phy-mode = "2500base-x";
+
+		fixed-link {
+			speed = <2500>;
+			full-duplex;
+			pause;
+		};
+	};
+
+	mdio: mdio-bus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		switch@0 {
+			compatible = "mediatek,mt7531";
+			reg = <31>;
+			reset-gpios = <&pio 39 GPIO_ACTIVE_LOW>;
+			reset-delay-us = <10000>;
+
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				port@0 { reg = <0>; label = "lan1"; };
+				port@1 { reg = <1>; label = "lan2"; };
+				port@2 { reg = <2>; label = "lan3"; };
+				port@3 { reg = <3>; label = "wan"; };
+
+				port@6 {
+					reg = <6>;
+					label = "cpu";
+					ethernet = <&gmac0>;
+					phy-mode = "2500base-x";
+
+					fixed-link {
+						speed = <2500>;
+						full-duplex;
+						pause;
+					};
+				};
+			};
+		};
+	};
+};
+
+/* 关闭 eMMC，确保 SPI 信号纯净 */
+&mmc0 {
+	status = "disabled";
+};
+
+/* SPI 引脚复用 */
+&pio {
+	spi0_flash_pins: spi0-pins {
+		mux {
+			function = "spi";
+			groups = "spi0", "spi0_wp_hold";
+		};
+
+		conf-pu {
+			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
+			bias-pull-up;
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
+
+		conf-pd {
+			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
+			drive-strength = <MTK_DRIVE_8mA>;
+		};
+	};
+};
+
+&uart0 { status = "okay"; };
+&watchdog { status = "okay"; };
