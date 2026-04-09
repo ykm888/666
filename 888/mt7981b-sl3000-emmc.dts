@@ -19,8 +19,8 @@
 
 	chosen {
 		stdout-path = "serial0:115200n8";
-		/* 救砖专用：强制走 initramfs，不挂载 rootfs */
-		bootargs = "console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000 root=/dev/ram0";
+		/* 救砖专用：由 U-Boot 通过 FIT 镜像传递内核命令行，这里只保留串口参数 */
+		bootargs = "console=ttyS0,115200n1 earlycon=uart8250,mmio32,0x11002000";
 	};
 
 	/* 1GB DDR4 完整映射 */
@@ -29,12 +29,24 @@
 		reg = <0x0 0x40000000 0x0 0x40000000>;
 	};
 
+	/* 1.8V 稳压器，用于 eMMC vqmmc */
 	reg_1p8v: regulator-1p8v {
 		compatible = "regulator-fixed";
 		regulator-name = "fixed-1.8V";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
 		regulator-always-on;
+		regulator-boot-on;
+	};
+
+	/* 3.3V 稳压器，用于 eMMC vmmc */
+	reg_3p3v: regulator-3p3v {
+		compatible = "regulator-fixed";
+		regulator-name = "fixed-3.3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+		regulator-boot-on;
 	};
 
 	leds {
@@ -69,7 +81,7 @@
 	};
 };
 
-/* SPI-NOR 32MB 救砖分区表 */
+/* SPI-NOR 32MB 救砖分区表（与 U-Boot 分区对齐，firmware 大小 25MB） */
 &spi0 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&spi0_flash_pins>;
@@ -85,49 +97,64 @@
 			#address-cells = <1>;
 			#size-cells = <1>;
 
-			/* 0x000000 - 0x100000 (1MB) */
 			partition@0 {
 				label = "BL2";
 				reg = <0x000000 0x100000>;
 				read-only;
 			};
 
-			/* 0x100000 - 0x180000 (512KB) */
+			/* u-boot-env 分区 64KB，与 U-Boot 默认环境大小一致 */
 			partition@100000 {
 				label = "u-boot-env";
-				reg = <0x100000 0x80000>;
+				reg = <0x100000 0x10000>;
 			};
 
-			/* 0x180000 - 0x380000 (2MB) */
+			partition@110000 {
+				label = "Config";
+				reg = <0x110000 0x70000>;
+				read-only;
+			};
+
 			partition@180000 {
-				label = "factory";
+				label = "Factory";
 				reg = <0x180000 0x200000>;
 				read-only;
 			};
 
-			/* 0x380000 - 0x580000 (2MB) */
 			partition@380000 {
 				label = "FIP";
 				reg = <0x380000 0x200000>;
 				read-only;
 			};
 
-			/* 0x580000 - 0x1F00000 (约 25.5MB) */
+			/* firmware 分区 25MB，与 IMAGE_SIZE=25600k 严格匹配 */
 			partition@580000 {
 				label = "firmware";
-				reg = <0x580000 0x1980000>;
-			};
-
-			/* 0x1F00000 - 0x2000000 (1MB) */
-			partition@1f00000 {
-				label = "storage";
-				reg = <0x1F00000 0x100000>;
+				reg = <0x580000 0x1900000>;
 			};
 		};
 	};
 };
 
-/* 2.5G MAC + MT7531 交换机 */
+/* eMMC 启用（救砖时需要挂载 eMMC 刷写固件） */
+&mmc0 {
+	status = "okay";
+	pinctrl-names = "default", "state_uhs";
+	pinctrl-0 = <&mmc0_pins_default>;
+	pinctrl-1 = <&mmc0_pins_uhs>;
+	bus-width = <8>;
+	max-frequency = <52000000>;
+	cap-mmc-highspeed;
+	cap-mmc-hw-reset;
+	mmc-hs200-1_8v;
+	vmmc-supply = <&reg_3p3v>;
+	vqmmc-supply = <&reg_1p8v>;
+	non-removable;
+	no-sd;
+	no-sdio;
+};
+
+/* 网络：MT7531 交换机 + 2.5G 上联 */
 &eth {
 	status = "okay";
 
@@ -135,7 +162,6 @@
 		compatible = "mediatek,eth-mac";
 		reg = <0>;
 		phy-mode = "2500base-x";
-
 		fixed-link {
 			speed = <2500>;
 			full-duplex;
@@ -167,7 +193,6 @@
 					label = "cpu";
 					ethernet = <&gmac0>;
 					phy-mode = "2500base-x";
-
 					fixed-link {
 						speed = <2500>;
 						full-duplex;
@@ -179,31 +204,53 @@
 	};
 };
 
-/* 关闭 eMMC，确保 SPI 信号纯净 */
-&mmc0 {
+/* 禁用 USB（设备无 USB 口） */
+&usb_phy {
+	status = "disabled";
+};
+&xhci {
 	status = "disabled";
 };
 
-/* SPI 引脚复用 */
 &pio {
 	spi0_flash_pins: spi0-pins {
 		mux {
 			function = "spi";
 			groups = "spi0", "spi0_wp_hold";
 		};
-
 		conf-pu {
 			pins = "SPI0_CS", "SPI0_HOLD", "SPI0_WP";
 			bias-pull-up;
 			drive-strength = <MTK_DRIVE_8mA>;
 		};
-
 		conf-pd {
 			pins = "SPI0_CLK", "SPI0_MOSI", "SPI0_MISO";
 			drive-strength = <MTK_DRIVE_8mA>;
+		};
+	};
+
+	mmc0_pins_default: mmc0-pins-default {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
+		};
+		conf-pu {
+			pins = "EMMC_RSTB";
+			bias-pull-up;
+		};
+	};
+
+	mmc0_pins_uhs: mmc0-pins-uhs {
+		mux {
+			function = "flash";
+			groups = "emmc_45";
 		};
 	};
 };
 
 &uart0 { status = "okay"; };
 &watchdog { status = "okay"; };
+
+/* 显式启用稳压器 */
+&reg_3p3v { status = "okay"; };
+&reg_1p8v { status = "okay"; };
