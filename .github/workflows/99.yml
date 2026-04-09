@@ -30,7 +30,6 @@ jobs:
         run: |
           TAG_NAME="v$(date -u +'%Y%m%d-%H%M%S')-rescue"
           echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
-          echo "Release tag: $TAG_NAME"
 
       - name: Install build dependencies
         run: |
@@ -45,15 +44,14 @@ jobs:
         run: |
           sudo apt clean
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
-          df -h
 
-      - name: Run diy-part1.sh (prepare tree)
+      - name: Run diy-part1.sh
         run: |
           chmod +x main-repo/diy-part1.sh
           cd main-repo
           ./diy-part1.sh
 
-      - name: Run diy-part2.sh (build + package)
+      - name: Run diy-part2.sh
         run: |
           chmod +x main-repo/diy-part2.sh
           cd main-repo
@@ -61,7 +59,6 @@ jobs:
 
       - name: List firmware files
         run: |
-          echo "=== Rescue build output ==="
           ls -la output || true
           ls -la output/firmware || true
           ls -la output/atf || true
@@ -73,15 +70,13 @@ jobs:
           tag_name: ${{ steps.release_tag.outputs.tag_name }}
           name: "SL3000 Rescue Firmware ${{ steps.release_tag.outputs.tag_name }}"
           body: |
-            ## SL3000 SPI-NOR 32MB 救砖全家桶（基于 ImmortalWrt 24.10）
-            - 救砖固件（initramfs）
-            - ATF / U-Boot 源码打包
+            ## SL3000 SPI-NOR 32MB 救砖固件（基于 ImmortalWrt 24.10）
+            - initramfs 救砖固件
+            - ATF / U-Boot 源码包
           files: |
             output/firmware/*
             output/atf/*
             output/uboot/*
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
