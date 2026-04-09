@@ -1,34 +1,93 @@
-name: 极速对碰引擎
+name: SL3000 Rescue Build (Only SPI-NOR)
 
 on:
+  workflow_dispatch:
   push:
-    paths:
-      - 'raw_data.json' # 只要你更新了数据文件，脚本立即运行
-  workflow_dispatch:      # 允许手动运行
-  schedule:
-    - cron: '0 4 * * *'  # 每天 12:00 自动校准一次
-
-permissions:
-  contents: write
+    tags: [ 'v*' ]
 
 jobs:
-  calculate:
-    runs-on: ubuntu-latest
+  build-rescue:
+    runs-on: ubuntu-22.04
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
     steps:
-      - name: 检出代码
+      - name: Checkout main repo (scripts + 888 三件套)
         uses: actions/checkout@v4
-
-      - name: 设置 Python
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          ref: main
+          path: main-repo
 
-      - name: 运行解析脚本
-        run: python scraper.py
+      - name: Checkout source repo (ImmortalWrt 源码)
+        uses: actions/checkout@v4
+        with:
+          repository: ykm99999/66
+          ref: sl3000-full-sync
+          path: source-repo
 
-      - name: 自动提交结果
+      - name: Generate release tag
+        id: release_tag
         run: |
-          git config --local user.email "action@github.com"
-          git config --local user.name "Auto-Calculator"
-          git add 999.txt
-          git diff --staged --quiet || (git commit -m "计算完成: $(date)" && git push)
+          TAG_NAME="v$(date -u +'%Y%m%d-%H%M%S')-rescue"
+          echo "tag_name=$TAG_NAME" >> $GITHUB_OUTPUT
+          echo "Release tag: $TAG_NAME"
+
+      - name: Install build dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            build-essential clang flex bison gawk gettext git \
+            libncurses-dev libssl-dev python3-distutils python3-setuptools \
+            rsync unzip zlib1g-dev file wget \
+            gcc-aarch64-linux-gnu device-tree-compiler
+
+      - name: Optimize disk space
+        run: |
+          sudo apt clean
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android
+          df -h
+
+      - name: Run diy-part1.sh (prepare tree)
+        run: |
+          chmod +x main-repo/diy-part1.sh
+          cd main-repo
+          ./diy-part1.sh
+
+      - name: Run diy-part2.sh (build + package)
+        run: |
+          chmod +x main-repo/diy-part2.sh
+          cd main-repo
+          ./diy-part2.sh
+
+      - name: List firmware files
+        run: |
+          echo "=== Rescue build output ==="
+          ls -la output || true
+          ls -la output/firmware || true
+          ls -la output/atf || true
+          ls -la output/uboot || true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release_tag.outputs.tag_name }}
+          name: "SL3000 Rescue Firmware ${{ steps.release_tag.outputs.tag_name }}"
+          body: |
+            ## SL3000 SPI-NOR 32MB 救砖全家桶
+            - OpenWrt/ImmortalWrt 救砖固件（initramfs）
+            - 预构建 ATF / U-Boot 二进制（如存在）
+            - 适配：MT7981B + 1GB DDR4 + 32MB SPI-NOR
+          files: |
+            output/firmware/*
+            output/atf/*
+            output/uboot/*
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sl3000-rescue-${{ steps.release_tag.outputs.tag_name }}
+          path: output/
