@@ -1,20 +1,27 @@
-# 888/mt7981_sl3000.mk
-# SPI-NOR 救砖专用机型定义（仅生成 initramfs 镜像）
+include ./common/common.mk
 
 define Device/mt7981_sl3000_spi_rescue
   DEVICE_VENDOR := Siluo
   DEVICE_MODEL := SL3000
   DEVICE_VARIANT := 1GB-DDR4-32MB-SPI-Rescue
-  DEVICE_DTS := mt7981b-sl3000-spi-nor
-  SUPPORTED_DEVICES := sl,3000-spi-nor
+  DEVICE_DTS := mt7981b-sl3000-emmc          # 修正为仓库中实际文件名（无后缀）
+  SUPPORTED_DEVICES := siluo,sl3000-spi-nor  # 兼容标识
 
-  KERNEL_LOADADDR := 0x44000000
+  SOC := mt7981
+  UBOOTENV_IN_FLASH := 1
+  KERNEL_IN_UBI := 0
 
-  # 只生成 initramfs 镜像（内核 + 内置根文件系统）
-  IMAGES := initramfs.bin
-  IMAGE/initramfs.bin := append-initramfs
+  # 修正内核加载地址（推荐 0x40800000 或 0x48000000）
+  KERNEL_LOADADDR := 0x40800000
 
-  # 救砖必需工具包
+  # 生成标准救砖镜像
+  IMAGES := rescue.bin
+  IMAGE/rescue.bin := append-kernel | pad-to 6M | append-rootfs | pad-rootfs
+
+  ifneq ($(CONFIG_TARGET_ROOTFS_INITRAMFS),)
+    IMAGE/rescue.bin := append-image-stage initramfs-kernel.bin | pad-to 6M
+  endif
+
   DEVICE_PACKAGES := \
     uboot-envtools mtd-utils kmod-mtd-rw \
     block-mount kmod-mmc kmod-mmc-mtk \
