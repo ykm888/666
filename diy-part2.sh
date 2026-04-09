@@ -2,7 +2,6 @@
 set -euo pipefail
 
 WORKSPACE="$GITHUB_WORKSPACE"
-MAIN_DIR="$WORKSPACE/main-repo"
 OUTPUT_DIR="$WORKSPACE/output"
 IMMORTALWRT_BUILD="$(cat "$WORKSPACE/build-dir.txt")"
 
@@ -33,8 +32,8 @@ else
   echo "❌ 未找到固件目录：$FIRMWARE_DIR"
 fi
 
-echo "=== 拉取并准备 ATF / U-Boot 源（使用你指定的底层仓库） ==="
-mkdir -p "$ATF_DIR" "$UBOOT_DIR"
+echo "=== 拉取并打包 ATF / U-Boot 源（使用你指定的底层仓库） ==="
+mkdir -p "$ATF_DIR" "$UBOOT_DIR" "$OUTPUT_DIR/atf" "$OUTPUT_DIR/uboot"
 
 if [ ! -d "$ATF_DIR/.git" ]; then
   git clone -b mtksoc-20260123 https://github.com/mtk-openwrt/arm-trusted-firmware.git "$ATF_DIR"
@@ -44,7 +43,6 @@ if [ ! -d "$UBOOT_DIR/.git" ]; then
   git clone -b mtksoc-20250711 https://github.com/mtk-openwrt/u-boot.git "$UBOOT_DIR"
 fi
 
-# 这里先不强行编 ATF/U-Boot，只把源码打包，后续你可以按 MT7981 的官方流程补上 build 命令
 tar -czf "$OUTPUT_DIR/atf/arm-trusted-firmware-mtksoc-20260123-src.tar.gz" -C "$ATF_DIR" .
 tar -czf "$OUTPUT_DIR/uboot/u-boot-mtksoc-20250711-src.tar.gz" -C "$UBOOT_DIR" .
 
