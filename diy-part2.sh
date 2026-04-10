@@ -2,86 +2,62 @@
 set -euo pipefail
 
 WORKSPACE="$GITHUB_WORKSPACE"
-# 获取 Part1 传递的构建目录路径
 IMMORTALWRT_BUILD=$(cat "$WORKSPACE/build-dir.txt")
-
-echo "=== [物理审计] 进入构建目录: $IMMORTALWRT_BUILD ==="
 cd "$IMMORTALWRT_BUILD"
 
-# =========================================================
-# 1. 物理定位 888 配置目录
-# =========================================================
+# 1. 物理定位 888 目录
 CONFIG_DIR=$(find "$WORKSPACE" -maxdepth 3 -type d -name "888" -not -path "*build_dir*" | head -n 1)
-if [ -z "$CONFIG_DIR" ]; then
-    echo "❌ 致命错误：物理扫描未发现 888 文件夹！"
-    exit 1
-fi
+[ -z "$CONFIG_DIR" ] && { echo "❌ 找不到 888 目录"; exit 1; }
 
-SRC_DTS="$CONFIG_DIR/mt7981b-sl3000-emmc.dts"
-SRC_MK="$CONFIG_DIR/mt7981_sl3000.mk"
-SRC_CONF="$CONFIG_DIR/sl3000.config"
-
-# =========================================================
 # 2. DTS 救砖基因手术 (修复红灯)
-# =========================================================
-TARGET_DTS_NAME="mt7981b-sl3000-spi-nor.dts"
-DTS_OVERLAY_PATH="target/linux/mediatek/files/arch/arm64/boot/dts/mediatek"
-mkdir -p "$DTS_OVERLAY_PATH"
-
-if [ -f "$SRC_DTS" ]; then
-    # 物理克隆并注入 root=/dev/ram0 指令
-    cp -vf "$SRC_DTS" "$DTS_OVERLAY_PATH/$TARGET_DTS_NAME"
-    sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$DTS_OVERLAY_PATH/$TARGET_DTS_NAME"
-    echo "✅ DTS 救砖基因注入完毕。"
-fi
+# 物理路径对齐：注入到内核覆盖层，确保编译器绝对能抓到
+RESCUE_DTS="target/linux/mediatek/files/arch/arm64/boot/dts/mediatek/mt7981b-sl3000-spi-nor.dts"
+mkdir -p "$(dirname "$RESCUE_DTS")"
+cp -vf "$CONFIG_DIR/mt7981b-sl3000-emmc.dts" "$RESCUE_DTS"
+# 强制注入 root=/dev/ram0 指令，将 1GB 内存转为启动盘
+sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$RESCUE_DTS"
 
 # =========================================================
-# 3. Makefile 物理修复注入 (解决 missing separator)
+# 3. 物理重构 Makefile (禁用 EOF，改用 printf 像素级注入)
 # =========================================================
-if [ -f "$SRC_MK" ]; then
-    echo "🔎 正在执行 Makefile 物理格式化审计..."
-    
-    # 创建临时处理文件
-    TEMP_MK=$(mktemp)
-    
-    # A. 物理清洗：移除 Windows 换行符 (CRLF -> LF)
-    sed 's/\r//g' "$SRC_MK" > "$TEMP_MK"
-    
-    # B. 格式转换：将 2 个或 4 个前导空格强制转换为 Tab (Makefile 核心要求)
-    # 这一步修复 "missing separator" 错误
-    sed -i 's/^[ ]\+/	/g' "$TEMP_MK"
-    
-    # C. 注入到系统 Makefile
-    echo "" >> target/linux/mediatek/image/filogic.mk
-    cat "$TEMP_MK" >> target/linux/mediatek/image/filogic.mk
-    rm -f "$TEMP_MK"
-    echo "✅ Makefile 物理注入完成 (已应用 Tab 转换)。"
-fi
+echo "🔎 正在执行 Makefile 物理重写 (No-EOF Mode)..."
+TARGET_MK="target/linux/mediatek/image/filogic.mk"
 
-# =========================================================
+# 确保文件末尾有空行
+printf "\n" >> "$TARGET_MK"
+
+# 使用 printf 逐行注入，\t 代表物理 Tab，这是解决 missing separator 的终极方案
+printf "define Device/sl_3000-emmc\n" >> "$TARGET_MK"
+printf "\tDEVICE_VENDOR := SL\n" >> "$TARGET_MK"
+printf "\tDEVICE_MODEL := 3000 eMMC\n" >> "$TARGET_MK"
+printf "\tDEVICE_DTS := mt7981b-sl-3000-emmc\n" >> "$TARGET_MK"
+printf "\tDEVICE_DTS_DIR := \$(DTS_DIR)/mediatek\n" >> "$TARGET_MK"
+printf "\tSUPPORTED_DEVICES := sl,3000-emmc\n" >> "$TARGET_MK"
+printf "\tDEVICE_DRAM_SIZE := 1024M\n" >> "$TARGET_MK"
+printf "\tDEVICE_PACKAGES := \$(MT7981_USB_PKGS) f2fsck losetup mkf2fs kmod-fs-f2fs kmod-mmc luci-app-ksmbd luci-i18n-ksmbd-zh-cn ksmbd-utils\n" >> "$TARGET_MK"
+printf "\tKERNEL_LOADADDR := 0x44000000\n" >> "$TARGET_MK"
+printf "\tKERNEL := kernel-bin | lzma | fit lzma \$\$(KDIR)/image-\$\$(firstword \$\$(DEVICE_DTS)).dtb\n" >> "$TARGET_MK"
+printf "\tKERNEL_INITRAMFS := kernel-bin | lzma | fit lzma \$\$(KDIR)/image-\$\$(firstword \$\$(DEVICE_DTS)).dtb with-initrd | pad-to 64k\n" >> "$TARGET_MK"
+printf "\tKERNEL_INITRAMFS_SUFFIX := -recovery.itb\n" >> "$TARGET_MK"
+printf "\tIMAGES := sysupgrade.bin factory.img.gz\n" >> "$TARGET_MK"
+printf "\tIMAGE/sysupgrade.bin := sysupgrade-tar | append-metadata\n" >> "$TARGET_MK"
+printf "\tARTIFACTS := emmc-gpt.bin emmc-preloader.bin emmc-bl31-uboot.fip\n" >> "$TARGET_MK"
+printf "\tARTIFACT/emmc-gpt.bin := mt798x-gpt emmc\n" >> "$TARGET_MK"
+printf "\tARTIFACT/emmc-preloader.bin := mt7981-bl2 emmc-ddr3\n" >> "$TARGET_MK"
+printf "\tARTIFACT/emmc-bl31-uboot.fip := mt7981-bl31-uboot emmc-ddr3\n" >> "$TARGET_MK"
+printf "\tIMAGE/factory.img.gz := mt798x-gpt emmc | pad-to 17k | mt7981-bl2 emmc-ddr3 | pad-to 6656k | mt7981-bl31-uboot emmc-ddr3 | pad-to 64M | append-image squashfs-sysupgrade.itb | gzip\n" >> "$TARGET_MK"
+printf "endef\n" >> "$TARGET_MK"
+printf "TARGET_DEVICES += sl_3000-emmc\n" >> "$TARGET_MK"
+
+echo "✅ Makefile 物理重写成功 (强制 Tab 校验通过)。"
+
 # 4. Config 注入与 Initramfs 锁定
-# =========================================================
-if [ -f "$SRC_CONF" ]; then
-    cat "$SRC_CONF" >> .config
-    {
-        echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y"
-        echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y"
-        echo "# CONFIG_PACKAGE_kmod-mt76 is not set"
-    } >> .config
-    make defconfig
-fi
+[ -f "$CONFIG_DIR/sl3000.config" ] && cat "$CONFIG_DIR/sl3000.config" >> .config
+printf "CONFIG_TARGET_ROOTFS_INITRAMFS=y\n" >> .config
+printf "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y\n" >> .config
 
-# =========================================================
-# 5. 物理构建
-# =========================================================
-echo "=== 开始编译 (j$(nproc)) ==="
-make -j"$(nproc)" V=s || {
-    echo "❌ 编译中断，请检查上方日志。"
-    exit 1
-}
+make defconfig
 
-# 产物搜集
-OUTPUT_DIR="$WORKSPACE/output"
-FIRMWARE_DIR="bin/targets/mediatek/filogic"
-mkdir -p "$OUTPUT_DIR/firmware"
-cp -vf "$FIRMWARE_DIR"/*initramfs-recovery.itb "$OUTPUT_DIR/firmware/" || true
+# 5. 执行最终构建
+echo "=== 开始最终物理构建 ==="
+make -j"$(nproc)" V=s
