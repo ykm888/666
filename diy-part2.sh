@@ -1,104 +1,102 @@
 #!/bin/bash
 set -euo pipefail
 
-# =========================================================
-# 环境变量与路径定义
-# =========================================================
 WORKSPACE="$GITHUB_WORKSPACE"
-OUTPUT_DIR="$WORKSPACE/output"
-# 从文件中读取之前的构建目录名
-IMMORTALWRT_BUILD="$(cat "$WORKSPACE/build-dir.txt")"
+# 获取 Part1 传递的构建目录路径
+IMMORTALWRT_BUILD=$(cat "$WORKSPACE/build-dir.txt")
 
-# 仓库三件套在你的仓库中的相对路径
-SRC_DTS="888/mt7981b-sl3000-emmc.dts"
-SRC_MK="888/mt7981_sl3000.mk"
-SRC_CONF="888/sl3000.config"
-
-ATF_DIR="$WORKSPACE/atf-src"
-UBOOT_DIR="$WORKSPACE/uboot-src"
-
-export CROSS_COMPILE=aarch64-linux-gnu-
-export ARCH=arm64
-
-echo "=== 进入 ImmortalWrt 构建目录: $IMMORTALWRT_BUILD ==="
+echo "=== [物理审计] 进入构建目录: $IMMORTALWRT_BUILD ==="
 cd "$IMMORTALWRT_BUILD"
 
 # =========================================================
-# 核心修复层：物理植入三件套
+# 1. 物理定位：自动搜索 888 配置目录 (解决层级偏移)
 # =========================================================
-echo "🔎 开始像素级注入私有配置..."
+echo "🔎 正在全量扫描物理磁盘锁定 888 文件夹..."
+# 在整个工作区内探测 888 目录，排除 build_dir 干扰
+CONFIG_DIR=$(find "$WORKSPACE" -maxdepth 3 -type d -name "888" -not -path "*build_dir*" | head -n 1)
 
-# 1. 修复 DTS 缺失与红灯问题
-if [ -f "$WORKSPACE/$SRC_DTS" ]; then
-    echo "✅ 发现源 DTS，正在进行救砖基因改造..."
-    # 物理路径：存放到系统预期的路径名
-    RESCUE_DTS_NAME="mt7981b-sl3000-spi-nor.dts"
-    TARGET_DTS_PATH="target/linux/mediatek/dts/$RESCUE_DTS_NAME"
-    
-    cp -v "$WORKSPACE/$SRC_DTS" "$TARGET_DTS_PATH"
-    
-    # 【救砖核心】强制注入 root=/dev/ram0，跳过 eMMC 挂载，彻底修复红灯常亮
-    sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$TARGET_DTS_PATH"
-    
-    # 修改 Model 名以便在串口中识别
-    sed -i "s/model = \".*\"/model = \"Siluo SL3000 Rescue (1GB RAM)\"/g" "$TARGET_DTS_PATH"
-
-    # 同步到内核覆盖层（Files 机制），确保编译器 cc1 绝对能找到它
-    OVERLAY_DIR="target/linux/mediatek/files/arch/arm64/boot/dts/mediatek"
-    mkdir -p "$OVERLAY_DIR"
-    cp -v "$TARGET_DTS_PATH" "$OVERLAY_DIR/"
-else
-    echo "❌ 致命错误：在 $WORKSPACE/$SRC_DTS 未找到源文件！"
+if [ -z "$CONFIG_DIR" ] || [ ! -d "$CONFIG_DIR" ]; then
+    echo "❌ 致命错误：物理扫描未发现 888 文件夹！"
+    echo "🔍 打印当前目录结构 (Depth 2) 以供调试:"
+    ls -R "$WORKSPACE" | grep ":$" | head -n 20
     exit 1
 fi
 
-# 2. 注入 Makefile (MK) 配置
-if [ -f "$WORKSPACE/$SRC_MK" ]; then
-    echo "✅ 注入自定义镜像生成逻辑 (MK)..."
-    cat "$WORKSPACE/$SRC_MK" >> target/linux/mediatek/image/filogic.mk
+echo "✅ 物理锁定成功: $CONFIG_DIR"
+
+# 定义三件套源文件
+SRC_DTS="$CONFIG_DIR/mt7981b-sl3000-emmc.dts"
+SRC_MK="$CONFIG_DIR/mt7981_sl3000.mk"
+SRC_CONF="$CONFIG_DIR/sl3000.config"
+
+# =========================================================
+# 2. 救砖基因注入 (解决编译报错与红灯)
+# =========================================================
+echo "🔧 注入私有配置与救砖基因手术..."
+
+# 定义系统预期的目标文件名 (解决 cc1 找不到 spi-nor.dts 的报错)
+TARGET_DTS_NAME="mt7981b-sl3000-spi-nor.dts"
+# 物理覆盖路径
+DTS_TARGET_PATH="target/linux/mediatek/dts/$TARGET_DTS_NAME"
+DTS_OVERLAY_PATH="target/linux/mediatek/files/arch/arm64/boot/dts/mediatek"
+
+mkdir -p "$(dirname "$DTS_TARGET_PATH")"
+mkdir -p "$DTS_OVERLAY_PATH"
+
+if [ -f "$SRC_DTS" ]; then
+    # 物理注入 DTS
+    cp -vf "$SRC_DTS" "$DTS_TARGET_PATH"
+    
+    # 【救砖手术】强制修改 Bootargs。关键：root=/dev/ram0
+    # 作用：让 1GB 内存直接承载 rootfs，跳过物理 eMMC 检测，修复红灯 Panic
+    sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$DTS_TARGET_PATH"
+    
+    # 同步至覆盖层 (OpenWrt 编译时优先级最高)
+    cp -vf "$DTS_TARGET_PATH" "$DTS_OVERLAY_PATH/"
+    echo "✅ DTS 物理补丁已植入。"
+else
+    echo "❌ 缺失 DTS 源文件: $SRC_DTS"
+    exit 1
 fi
 
-# 3. 注入并强制修正 .config
-if [ -f "$WORKSPACE/$SRC_CONF" ]; then
-    echo "✅ 注入并合并 .config..."
-    cat "$WORKSPACE/$SRC_CONF" >> .config
-    # 强制开启 Initramfs 模式
-    echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y" >> .config
-    echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y" >> .config
-    # 刷新配置并同步依赖
+# 3. 追加 Makefile (MK) 逻辑
+if [ -f "$SRC_MK" ]; then
+    cat "$SRC_MK" >> target/linux/mediatek/image/filogic.mk
+    echo "✅ Makefile 配置已追加。"
+fi
+
+# 4. 强制锁定 .config 为救砖模式
+if [ -f "$SRC_CONF" ]; then
+    cat "$SRC_CONF" >> .config
+    {
+        echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y"
+        echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y"
+        echo "# CONFIG_PACKAGE_kmod-mt76 is not set"
+    } >> .config
+    # 应用配置
     make defconfig
 fi
 
 # =========================================================
-# 构建阶段
+# 3. 物理构建阶段
 # =========================================================
-echo "=== 删除 mt76（减少编译体积，救砖不需要无线） ==="
-rm -rf package/kernel/mt76 || true
-
-echo "=== 开始执行物理构建 (Rescue ITB) ==="
-# 使用 V=s 捕捉详细错误，如果失败则打印最后 50 行日志
+echo "=== 开始物理构建 (Generation: SL3000 Rescue Pack) ==="
+# 使用 V=s 捕捉实时日志，j$(nproc) 加速
 make -j"$(nproc)" V=s || {
-    echo "❌ 编译失败，查看错误上下文："
+    echo "❌ 编译中断，截取最后 50 行日志："
     tail -n 50 "$IMMORTALWRT_BUILD/logs/build.log" || true
     exit 1
 }
 
-# 搜集编译出的固件
+# =========================================================
+# 4. 产物搜集
+# =========================================================
+OUTPUT_DIR="$WORKSPACE/output"
 FIRMWARE_DIR="bin/targets/mediatek/filogic"
 mkdir -p "$OUTPUT_DIR/firmware"
+
+echo "🚚 搜集固件产物至 output 目录..."
 cp -vf "$FIRMWARE_DIR"/*initramfs-recovery.itb "$OUTPUT_DIR/firmware/" || true
 cp -vf "$FIRMWARE_DIR"/*.bin "$OUTPUT_DIR/firmware/" || true
 
-# =========================================================
-# ATF / U-Boot 源码拉取 (保持原逻辑)
-# =========================================================
-echo "=== 拉取 ATF / U-Boot 源并备份 ==="
-mkdir -p "$ATF_DIR" "$UBOOT_DIR" "$OUTPUT_DIR/atf" "$OUTPUT_DIR/uboot"
-
-git clone --depth 1 -b mtksoc-20260123 https://github.com/mtk-openwrt/arm-trusted-firmware.git "$ATF_DIR"
-git clone --depth 1 -b mtksoc-20250711 https://github.com/mtk-openwrt/u-boot.git "$UBOOT_DIR"
-
-tar -czf "$OUTPUT_DIR/atf/atf-src.tar.gz" -C "$ATF_DIR" .
-tar -czf "$OUTPUT_DIR/uboot/uboot-src.tar.gz" -C "$UBOOT_DIR" .
-
-echo "=== 脚本执行完毕，救砖包已生成在 $OUTPUT_DIR/firmware ==="
+echo "✅ 物理构建流程已完整执行！"
