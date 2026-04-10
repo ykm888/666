@@ -10,23 +10,30 @@ CONFIG_DIR=$(find "$WORKSPACE" -maxdepth 3 -type d -name "888" -not -path "*buil
 [ -z "$CONFIG_DIR" ] && { echo "❌ 找不到 888 目录"; exit 1; }
 
 # 2. DTS 救砖基因手术 (修复红灯)
-# 物理路径对齐：注入到内核覆盖层，确保编译器绝对能抓到
 RESCUE_DTS="target/linux/mediatek/files/arch/arm64/boot/dts/mediatek/mt7981b-sl3000-spi-nor.dts"
 mkdir -p "$(dirname "$RESCUE_DTS")"
 cp -vf "$CONFIG_DIR/mt7981b-sl3000-emmc.dts" "$RESCUE_DTS"
-# 强制注入 root=/dev/ram0 指令，将 1GB 内存转为启动盘
 sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$RESCUE_DTS"
 
 # =========================================================
-# 3. 物理重构 Makefile (禁用 EOF，改用 printf 像素级注入)
+# 3. 物理清场：彻底删除会导致报错的旧文件
 # =========================================================
-echo "🔎 正在执行 Makefile 物理重写 (No-EOF Mode)..."
+echo "🧹 正在物理清场旧的 Makefile 碎片..."
+# 删除之前注入可能残留的坏文件，防止 include 报错
+rm -f target/linux/mediatek/image/mt7981_sl3000.mk
+# 清理主 Makefile 中可能存在的 include 引用（针对 part1 的残留）
+sed -i '/mt7981_sl3000.mk/d' target/linux/mediatek/image/filogic.mk
+
+# =========================================================
+# 4. 物理重构 Makefile (使用 printf 像素级注入)
+# =========================================================
+echo "🔎 正在执行 Makefile 物理注入 (像素级 Tab 锁定)..."
 TARGET_MK="target/linux/mediatek/image/filogic.mk"
 
 # 确保文件末尾有空行
 printf "\n" >> "$TARGET_MK"
 
-# 使用 printf 逐行注入，\t 代表物理 Tab，这是解决 missing separator 的终极方案
+# 使用 printf 注入。核心：\t 是物理 Tab 键，解决 missing separator 的唯一解
 printf "define Device/sl_3000-emmc\n" >> "$TARGET_MK"
 printf "\tDEVICE_VENDOR := SL\n" >> "$TARGET_MK"
 printf "\tDEVICE_MODEL := 3000 eMMC\n" >> "$TARGET_MK"
@@ -49,15 +56,15 @@ printf "\tIMAGE/factory.img.gz := mt798x-gpt emmc | pad-to 17k | mt7981-bl2 emmc
 printf "endef\n" >> "$TARGET_MK"
 printf "TARGET_DEVICES += sl_3000-emmc\n" >> "$TARGET_MK"
 
-echo "✅ Makefile 物理重写成功 (强制 Tab 校验通过)。"
+echo "✅ Makefile 物理注入完成。"
 
-# 4. Config 注入与 Initramfs 锁定
+# 5. .config 合并
 [ -f "$CONFIG_DIR/sl3000.config" ] && cat "$CONFIG_DIR/sl3000.config" >> .config
 printf "CONFIG_TARGET_ROOTFS_INITRAMFS=y\n" >> .config
 printf "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y\n" >> .config
 
 make defconfig
 
-# 5. 执行最终构建
-echo "=== 开始最终物理构建 ==="
+# 6. 构建
+echo "=== 开始物理构建 ==="
 make -j"$(nproc)" V=s
