@@ -1,84 +1,93 @@
 #!/bin/bash
 set -euo pipefail
 
+# =========================================================
+# 1. 物理路径自探测逻辑
+# =========================================================
 WORKSPACE="$GITHUB_WORKSPACE"
 SOURCE_DIR="$WORKSPACE/source-repo"
-MAIN_DIR="$WORKSPACE/main-repo"
-CONFIG_DIR="$MAIN_DIR/888"
-OUTPUT_DIR="$WORKSPACE/output"
 IMMORTALWRT_BUILD="$WORKSPACE/immortalwrt-build"
 
-# 【关键点 1】改用通用的 files 路径，并兼容 6.6 内核
-DTS_BASE="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
-# 底层构建可能直接在 dts 目录找，我们也放一份备份
-DTS_RAW="target/linux/mediatek/dts"
-IMAGE_DIR="target/linux/mediatek/image"
-FILOGIC_MK="$IMAGE_DIR/filogic.mk"
+echo "🔎 正在全量探测 888 配置目录..."
+# 动态寻找 888 文件夹，忽略层级差异
+CONFIG_DIR=$(find "$WORKSPACE" -type d -name "888" | head -n 1)
 
-mkdir -p "$OUTPUT_DIR" "$OUTPUT_DIR/atf" "$OUTPUT_DIR/uboot" "$OUTPUT_DIR/firmware"
+if [ -z "$CONFIG_DIR" ] || [ ! -d "$CONFIG_DIR" ]; then
+    echo "❌ 致命错误：在工作区未找到 888 文件夹！"
+    echo "当前目录树如下："
+    ls -R "$WORKSPACE"
+    exit 1
+fi
 
-export CROSS_COMPILE=aarch64-linux-gnu-
-export ARCH=arm64
+echo "✅ 定位成功: $CONFIG_DIR"
 
-echo "=== [CHECK] 888 三件套 ==="
-ls -la "$CONFIG_DIR"
+# 定义源文件物理路径
+SRC_DTS="$CONFIG_DIR/mt7981b-sl3000-emmc.dts"
+SRC_MK="$CONFIG_DIR/mt7981_sl3000.mk"
+SRC_CONF="$CONFIG_DIR/sl3000.config"
 
-# 严格物理校验
-[ -f "$CONFIG_DIR/mt7981b-sl3000-emmc.dts" ] || { echo "❌ 缺失 DTS"; exit 1; }
-[ -f "$CONFIG_DIR/mt7981_sl3000.mk" ]        || { echo "❌ 缺失 MK"; exit 1; }
-[ -f "$CONFIG_DIR/sl3000.config" ]           || { echo "❌ 缺失 Config"; exit 1; }
-
-echo "=== 准备 ImmortalWrt 24.10 ==="
+# =========================================================
+# 2. 准备 ImmortalWrt 环境
+# =========================================================
+echo "=== 准备构建环境 ==="
 cd "$WORKSPACE"
 rm -rf "$IMMORTALWRT_BUILD"
 cp -r "$SOURCE_DIR" "$IMMORTALWRT_BUILD"
 
 cd "$IMMORTALWRT_BUILD"
 
-# 屏蔽不必要的 feeds
-sed -i 's/^src-git telephony/#src-git telephony/g' feeds.conf.default || true
-
+# 更新 Feeds
 ./scripts/feeds update -a
 ./scripts/feeds install -a
 make package/symlinks
 
 # =========================================================
-# 【核心修改】注入 DTS 并进行“救砖手术”
+# 3. 救砖基因注入 (DTS 手术)
 # =========================================================
 echo "=== 注入并改造救砖 DTS ==="
-mkdir -p "$DTS_BASE" "$DTS_RAW"
+# 定义内核物理路径 (兼容 files 覆盖机制)
+DTS_FILES_PATH="target/linux/mediatek/files-6.6/arch/arm64/boot/dts/mediatek"
+DTS_RAW_PATH="target/linux/mediatek/dts"
+RESCUE_DTS_NAME="mt7981b-sl3000-spi-nor.dts"
 
-# 1. 物理克隆并更名为系统预期的 spi-nor 名称 (解决 cc1 报错)
-RESCUE_DTS="mt7981b-sl3000-spi-nor.dts"
-cp -vf "$CONFIG_DIR/mt7981b-sl3000-emmc.dts" "$DTS_BASE/$RESCUE_DTS"
-cp -vf "$CONFIG_DIR/mt7981b-sl3000-emmc.dts" "$DTS_RAW/$RESCUE_DTS"
+mkdir -p "$DTS_FILES_PATH" "$DTS_RAW_PATH"
 
-# 2. 【物理级修复红灯】修改 bootargs 强制使用 RAMDISK
-# 将 root=/dev/mmcblk... 或其他挂载目标强行改为 root=/dev/ram0
-sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$DTS_BASE/$RESCUE_DTS"
-sed -i 's/model = ".*"/model = "Siluo SL3000 Rescue (1GB DDR4)"/g' "$DTS_BASE/$RESCUE_DTS"
-
-# =========================================================
-
-echo "=== 注入 image mk ==="
-cp -vf "$CONFIG_DIR/mt7981_sl3000.mk" "$IMAGE_DIR/"
-
-if ! grep -q "mt7981_sl3000.mk" "$FILOGIC_MK"; then
-  echo 'include ./mt7981_sl3000.mk' >> "$FILOGIC_MK"
-  echo "✅ 已写入 filogic.mk include"
+if [ -f "$SRC_DTS" ]; then
+    # 物理克隆并更名
+    cp -vf "$SRC_DTS" "$DTS_FILES_PATH/$RESCUE_DTS_NAME"
+    cp -vf "$SRC_DTS" "$DTS_RAW_PATH/$RESCUE_DTS_NAME"
+    
+    # 【修复红灯】强制注入 root=/dev/ram0 (RAMDISK 模式)
+    # 这将使 1GB 内存承载系统，跳过 eMMC 挂载导致的 Panic
+    sed -i 's/bootargs = ".*"/bootargs = "console=ttyS0,115200n8 earlycon=uart8250,mmio32,0x11002000 root=\/dev\/ram0 rw swiotlb=1"/g' "$DTS_FILES_PATH/$RESCUE_DTS_NAME"
+    sed -i "s/model = \".*\"/model = \"Siluo SL3000 Rescue (1GB RAM)\"/g" "$DTS_FILES_PATH/$RESCUE_DTS_NAME"
+    echo "✅ DTS 救砖补丁已注入。"
+else
+    echo "❌ 缺失 DTS 文件: $SRC_DTS"
+    exit 1
 fi
 
-echo "=== 注入救砖 config ==="
-cp -vf "$CONFIG_DIR/sl3000.config" .config
-# 强制开启 INITRAMFS 救砖模式，不依赖 eMMC
-echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y" >> .config
-echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y" >> .config
+# =========================================================
+# 4. 镜像生成逻辑与配置注入
+# =========================================================
+echo "=== 注入 Makefile 与 Config ==="
+[ -f "$SRC_MK" ] && cp -vf "$SRC_MK" target/linux/mediatek/image/
+if ! grep -q "mt7981_sl3000.mk" target/linux/mediatek/image/filogic.mk; then
+    echo 'include ./mt7981_sl3000.mk' >> target/linux/mediatek/image/filogic.mk
+fi
 
-# 禁用 mt76 减小体积，提升救砖成功率
-echo "# CONFIG_PACKAGE_kmod-mt76 is not set" >> .config
+[ -f "$SRC_CONF" ] && cp -vf "$SRC_CONF" .config
 
+# 强制追加救砖必备全局变量
+{
+    echo "CONFIG_TARGET_ROOTFS_INITRAMFS=y"
+    echo "CONFIG_TARGET_INITRAMFS_COMPRESSION_LZMA=y"
+    echo "# CONFIG_PACKAGE_kmod-mt76 is not set"
+} >> .config
+
+# 刷新 .config 依赖
 make defconfig
 
+# 保存路径供下一步骤使用
 pwd > "$WORKSPACE/build-dir.txt"
-
 echo "=== diy-part1.sh 修复完成 ==="
